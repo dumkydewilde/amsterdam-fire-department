@@ -1,0 +1,607 @@
+10 Years of Emergency Response Calls By The Amsterdam Fire Department
+========================================================
+###*By Dumky de Wilde*
+
+##Introduction
+The city of Amsterdam has recently [released data from 2005-2015](http://data.amsterdam.nl/dataset/brandmeldingen-2010-2015) containing all the responses to emergency calls by the fire brigade in Amsterdam's greater metropolitan region. If you've always wanted to know what a day in the life of a fireman looks like, this is your chance to know what 3650 days in the lives of the [1200 people working for the fire department](https://www.brandweer.nl/amsterdam-amstelland/organisatie/amsterdam-amstelland/organisatiemodel/) look like. I decided to add population data per district per year to the data set as well. These numbers, unfortunately, were only available for 2006-2015, and since the data for 2015 was only for the first half of the year, I've decided to remove the observations outside of 2006-2014. 
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+library("ggplot2")
+library("GGally")
+library("RColorBrewer")
+library("dplyr")
+library("tidyr")
+library("stringr")
+library("knitr")
+
+#Knitr options
+opts_chunk$set(fig.width=8, fig.height=7,
+               fig.path='figures/', warning=FALSE)
+
+#basic plot options for ggplot2
+bg_and_axes <-  theme(
+  text = element_text(family = "Avenir", size = 10),
+  panel.background = element_rect(fill = NA),
+  panel.grid.major.x = element_line(colour = "#cccccc", size = 0.3, linetype = "dotted"),
+  panel.grid.major.y = element_line(colour = "#cccccc", size = 0.3, linetype = "dotted"),
+  axis.ticks = element_blank(),
+  #axis.line.y = element_line(color = "black", size = 0.3),
+  axis.text = element_text(colour = "#666666"),
+  axis.title = element_text(colour = "#999999", face = "italic"),
+  axis.text.x = element_text(margin = margin(16,0,12,0)),
+  axis.text.y = element_text(margin = margin(0,16,0,12)),
+  strip.background = element_blank(),
+  strip.text = element_text(hjust = 0),
+  plot.title = element_text(size = rel(1.2), margin = margin(0,6,16,6), hjust = 0),
+  plot.margin = unit(c(1,0,0,0), "cm"),
+  legend.direction = "horizontal",
+  legend.position = "bottom",
+  legend.key.size = unit(0.5, "cm"),
+  legend.text = element_text(colour = "#666666", size = rel(0.8)),
+  legend.key = element_blank())
+
+spectral_colors <- brewer.pal(9, "Spectral")
+
+```
+
+```{r echo=FALSE, Load_the_Data}
+# Load the Data and translations
+english_col_names <- c("incident_id", "start_time", "incident_type", 
+"national_incident_classification_1", "national_incident_classification_2", "national_incident_classification_3", "date", "year", "month_nr", "month_name", "day_nr", "day_name", "week_nr", "quarter", "priority", "hour", "day_night", "object_type", "object_function", "neighbourhood", "district", "city", "municipality")
+
+incident_type_EN <- c("(not specified)","Emergency hoisting","Ambulance assistance","Police assistence","Entrapment / rescue", "Inside fire","Inflammable gasses","Inflammable liquids","Check up / Rumor of fire","Decommissioning","Outside fire","Lock out","Animal in water","Reoccupation", "Animal assistance","General assistance","Animal assistance (unspecified)","Assistance on water","Interregional assistance","Injured personnel","Elevator confinement","Measurement / disturbance / pollution", "NA","OMS / automatic alert","Other hazardous substances","Person in water","CPR","Regional assistance","Storm and water damage","Vehicle in water")
+
+days_of_week_EN <- c("Maandag" = "Monday","Dinsdag" = "Tuesday" ,"Woensdag" = "Wednesday" , 
+                     "Donderdag" =  "Thursday","Vrijdag" =  "Friday","Zaterdag" = "Saturday",
+                     "Zondag" = "Sunday")
+
+months_EN <-  c("January", "February", "March", "April", "May", "June", 
+                   "July", "August", "September", "October", "November", "December")
+
+brwaa <- read.csv2("brwaa_2010-2015.csv")
+colnames(brwaa) <- english_col_names
+
+#Let's clean up the data.
+#First strip the white space that all the factor entries have for some reason. 
+for (x in 1:ncol(brwaa)) {
+  if (is.factor(brwaa[,x])){
+    brwaa[,x] <- as.factor(str_trim(brwaa[,x]))
+  }
+}
+
+#Now turn the dates into date objects
+brwaa$date <- as.Date(strptime(brwaa$date, "%Y/%m/%d %H:%M:%OS"))
+brwaa$start_time <- as.Date(strptime(brwaa$start_time, "%Y/%m/%d %H:%M:%OS"))
+
+#translate the incident_type factor levels to English
+levels(brwaa$incident_type) <- incident_type_EN
+
+#Take just the city of Amsterdam and leave out the smaller towns in the metropolitan region
+brwaa <- brwaa %>%
+  filter(municipality == "Amsterdam")
+
+#load the population data and match the colnames with the right names for the districts
+amsterdam_pop <- read.csv2("2006_2015_district_population.csv")
+colnames(amsterdam_pop) <- c("year","Stadsdeel Centrum","Stadsdeel Westpoort","Stadsdeel West","Stadsdeel Nieuw-West","Stadsdeel Zuid","Stadsdeel Oost","Stadsdeel Noord","Stadsdeel Zuidoost","Total")
+
+amsterdam_pop <- gather(amsterdam_pop, "district","population", 2:10)
+brwaa <- merge(brwaa, amsterdam_pop, by=c("year", "district"))
+
+```
+
+# Univariate Plots Section
+We'll start of with some of the basic elements of the data set.
+```{r echo=TRUE, Univariate_Plots}
+str(brwaa)
+```
+
+Next look at which incidents occur most and least.
+```{r less_than_100_incidents}
+#incidents under 100
+brwaa %>%
+  count(incident_type, sort = T) %>%
+  filter(n < 100)
+
+#top 5 incidents
+brwaa %>%
+  count(incident_type, sort = T) %>%
+  filter(incident_type %in% incident_type[1:5])
+
+```
+
+Next up are some plots. We'll start with the univariate plots and look at the counts for some of the different variables.
+```{r incident_type_count}
+
+ggplot(brwaa, aes(reorder(incident_type, table(incident_type)[incident_type]))) +
+  geom_bar(fill=spectral_colors[1]) +
+  geom_text(stat="count", aes(label=..count..), size=2, colour="white", hjust=1.1, fontface="bold") +
+  bg_and_axes +
+  scale_x_discrete(expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("Type of incident (count)")
+```
+
+
+```{r fig.height=3, priority_count}
+
+ggplot(brwaa, aes(reorder(priority, table(priority)[priority]))) +
+  geom_bar(fill=spectral_colors[9]) +
+  geom_text(stat="count", aes(label=..count..), size=2, colour="white", hjust=1.1, fontface="bold") +
+  bg_and_axes +
+  scale_x_discrete(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("Priority of the response call (count)")
+```
+
+```{r object_function_count}
+ggplot(brwaa, aes(reorder(object_function, table(object_function)[object_function]))) +
+  geom_bar(fill=spectral_colors[1]) +
+  geom_text(stat="count", aes(label=..count..), size=2, colour="white", hjust=1.1, fontface="bold") +
+  bg_and_axes +
+  scale_x_discrete(expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("The function of the object (count)")
+
+```
+
+```{r fig.height=19, neighbourhood_count}
+ggplot(brwaa, aes(reorder(neighbourhood, table(neighbourhood)[neighbourhood]))) +
+  geom_bar(fill=spectral_colors[9]) +
+  geom_text(stat="count", aes(label=..count..), size=2, colour="white", hjust=1.1, fontface="bold") +
+  bg_and_axes +
+  scale_x_discrete(expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("The neighbourhood of the incident (count)")
+```
+
+```{r district_count}
+ggplot(brwaa, aes(reorder(district, table(district)[district]))) +
+  geom_bar(fill=spectral_colors[1]) +
+  geom_text(stat="count", aes(label=..count..), size=2, colour="white", hjust=1.3, fontface="bold") +
+  bg_and_axes +
+  scale_x_discrete(expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("The district of the incident (count)")
+```
+
+
+In the final plots for this section, we'll look at the distribution over time. First off, the frequency over time.
+```{r date_freqpoly}
+ggplot(brwaa, aes(date, ..count..)) +
+  geom_freqpoly(binwidth=90) +
+  scale_x_date(breaks = seq(as.Date("2005-01-01"), max(brwaa$date), 365.25)) +
+  bg_and_axes +
+  theme(axis.text.x = element_text(angle=45)) +
+  ggtitle("Frequency polygon of incidents (per 90 days)")
+
+```
+
+Next up, with regard to time, we'll look at the different counts for days of the week, months of the year, and the different years.
+
+```{r days_of_week_count}
+ggplot(brwaa, aes(day_name)) +
+  geom_bar(fill=spectral_colors[1]) +
+  geom_text(stat="count", aes(label=..count..), size=2.2, colour="white", hjust=1.3, fontface="bold") +
+  bg_and_axes +
+  scale_x_discrete(limits = c("Zondag","Zaterdag","Vrijdag",
+                              "Donderdag","Woensdag","Dinsdag","Maandag"),
+                   labels = days_of_week_EN, expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("Frequency per day of the week")
+```
+
+```{r months_count}
+ggplot(brwaa, aes(reorder(month_name, -month_nr))) +
+  geom_bar(fill=spectral_colors[9]) +
+  geom_text(stat="count", aes(label=..count..), size=2.2, colour="white", hjust=1.3, fontface="bold") +
+  bg_and_axes +
+  scale_x_discrete(expand = c(0,1)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("Frequency per month of the year")
+```
+
+```{r frequency_year}
+ggplot(brwaa, aes(year)) +
+  geom_bar(fill=spectral_colors[1]) +
+  geom_text(stat="count", aes(label=..count..), size=2.2, colour="white", hjust=1.3, fontface="bold") +
+  bg_and_axes +
+  scale_x_continuous(breaks= 2005:2015, expand = c(0,0)) + 
+  scale_y_continuous(expand = c(0,0)) + 
+  coord_flip() +
+  theme(axis.title = element_blank()) +
+  ggtitle("Frequency per year")
+```
+
+```{r}
+ggplot(brwaa, aes(year, population, color=district)) +
+  stat_summary(fun.y = "mean", geom = "line") +
+  bg_and_axes +
+  theme(axis.line = element_blank()) +
+  ggtitle("Population per district over time")
+
+```
+
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+The dataset is structured around observations (a 'tidy' dataset). Each observation represents an incident that was responded to by the fire department. Each observation has 24 variables: a unique identifier and 23 other variables related to the type of incident, the date and time of the incident, the location, and the type of object at which the incident took place. 
+
+### What is/are the main feature(s) of interest in your dataset?
+The mean feature of interest is the type of incident, which varies from automatic fire alarms to drowning animals. It'll be interesting to see if there are any differences, not just among the different types of incident but also the relation between the type of incident and the place and time of the incident. I won't look into all the different incidents, but see if there are some that stand out and are worth looking into.
+
+### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+The date and time as well as the general location (neighbourhood) have been well documented. These properties will be very interesting to look at when assessing the different types of incidents, as well as the number of people living in a particular district for a particular year.
+
+### Did you create any new variables from existing variables in the dataset?
+I've added population data per district and year to the data set, so each observation also has as a property, the population for the year and district that observation took place. Also, some cleaning has been done to the categorical variables which, for some reason, had added white space. 
+
+### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
+When looking at the different distributions, there are a couple of things that seem interesting. Although the distribution doesn't seem 'off' necessarily, it is clear that a couple of things stand out. For the type of incident the first two items, automatic alert (OMS) and outside fire, are the most common incidents with respectively 20903 and 17611 occurences, far above the number three (elevator entrapment) with 9950 occurences.
+With regard to the neighbourhoods it's interesting to see that the Bijlmer (also known as the south-east or 'Zuid-Oost' district) stands out so much. It is known as a more criminal area with [high unemployment](https://www.ois.amsterdam.nl/popup/1170) and a lot of highrise buildings, but this does seem like a lot of incidents. Something worth exploring.
+
+Furthermore I thought it was interesting to see that Januari and December seem to stand out among the other months. My guess would be that this has to do mostly with the events and incidents around new years eve.
+
+
+# Bivariate Plots Section
+I want to start with an overview of the 20 most common incidents versus the most common neighbourhoods. I've sorted the top neighbourhoods and incident types and have shown them in the heatmap below, based on the number of occurences of the combinations of the two variables.
+```{r echo=FALSE, Bivariate_Plots_heatmap}
+top_incidents <- count(brwaa, incident_type, sort = T)
+top_district <- count(brwaa, district, sort = T)
+top_neighbourhood <- count(brwaa, neighbourhood, sort = T)
+
+district_incident_heatmap <- brwaa %>%
+  filter(neighbourhood %in% top_neighbourhood$neighbourhood[1:50] & neighbourhood != "" &
+        incident_type %in% top_incidents$incident_type[1:20]) %>% 
+  group_by(incident_type, neighbourhood) %>%
+  summarise(n = n())
+
+ggplot(district_incident_heatmap, aes(incident_type, neighbourhood)) +
+  geom_tile(aes(fill=n^(1/2)), colour = "white") +
+  geom_text(aes(label=n), size=2, colour="white") +
+  bg_and_axes +
+  scale_fill_distiller(palette = "Spectral") +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_y_discrete(expand = c(0,0)) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text.y = element_text(size = rel(0.8)),
+        axis.text.x = element_text(angle = 45, vjust = 1.15, hjust = 1, size = rel(0.8)),
+        axis.line = element_blank()) +
+  ggtitle("Number of incidents for the most common neighbourhoods")
+
+```
+
+Next up we'll look at the most common incidents per day of the week to see if patterns emerge.
+
+```{r day_of_week_incident_heatmap}
+day_of_week_incident_heatmap <- brwaa %>%
+  filter(incident_type %in% top_incidents$incident_type[1:20]) %>% 
+  group_by(day_name, incident_type) %>%
+  summarise(n = n())
+
+ggplot(day_of_week_incident_heatmap, aes(day_name, incident_type)) +
+  geom_tile(aes(fill=n), colour = "white") +
+  geom_text(aes(label=n), size=2, colour="white") +
+  bg_and_axes +
+  scale_fill_distiller(palette = "Reds", direction = 1) +
+   scale_x_discrete(limits = c("Maandag","Dinsdag","Woensdag",
+                              "Donderdag","Vrijdag","Zaterdag","Zondag"),
+                   labels = days_of_week_EN, expand = c(0,0)) + 
+  scale_y_discrete(expand = c(0,0)) +
+  theme(legend.position = "none",
+        panel.grid = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.text.y = element_text(size = rel(0.8)),
+        axis.text.x = element_text(angle = 45, vjust = 1.15, hjust = 1, size = rel(0.8)),
+        axis.line = element_blank()) +
+  ggtitle("Number of incidents per type and day of the week")
+```
+
+Here we can clearly see that the automatic alerts seem to relate to workdays, whereas outside fires seem to, interestingly enough appear in larger numbers on sundays and mondays compared to the rest of the week.
+
+Now, one of the things I find interesting, because it's so recognisable, is elevator confinement. I can imagine the frustration of being locked in an elevator for hours, and the relief when the firemen finally arrive and retrieve you. So, let's look into that. First of, the number of occurences per district over time. I have left out the industrial area, 'Stadsdeel Westpoort', because it will distort our data when looking at the number of cofinements per 1000 people, and is generally not considered a part of the 'city'.
+
+```{r elevator_confinements_count}
+elevators <- brwaa %>%
+  filter(incident_type == "Elevator confinement") %>%
+  filter(district != "" & district != "Stadsdeel Westpoort") %>%
+  mutate(month = as.Date(cut(date, breaks="quarter"))) %>%
+  group_by(month, district, population) %>%
+  summarise(n = n())
+
+ggplot(data = elevators, aes(month, n, fill=district)) +
+  geom_area(alpha=0.8) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", 
+               expand = c(0,0)) +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(color = "#666666"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        legend.direction = "horizontal",
+        legend.position = "bottom") +
+  ggtitle("Number of elevator confinements in Amsterdam") +
+  scale_fill_brewer(palette = "RdYlBu")
+```
+
+The interesting thing is not so much that the highest number of elevator confinements is in the Bijlmer ('Zuid-Oost' district), after all it is a region with a large number of highrise buildings. What's interesting is how much it has decreased over the years. Let's compare the average number of occurences with the number in the Bijlmer. As you can see, there are also a number of peaks. These may be coincidental, but might also be because of a power black-out like on [May 29th 2006](http://www.trouw.nl/tr/nl/4324/Nieuws/article/detail/1453395/2006/05/29/Stroomstoring-legt-delen-Amsterdam-tijdelijk-plat.dhtml).
+
+##'Diving' into the numbers.
+The other thing I found interesting, and was something I hadn't really realised was a part of the work of firemen, is retrieving persons and animals from the water. 
+
+```{r person_animal_in_water}
+
+water_quarter <- brwaa %>%
+  filter(incident_type == "Animal in water" | incident_type == "Person in water") %>%
+  filter(district %in% top_district$district[1:10] & district != "") %>%
+  mutate(quarter = as.Date(cut(date, breaks="quarter"))) %>%
+  group_by(quarter, incident_type) %>%
+  summarise(n = n())
+
+ggplot(data = water_quarter, aes(quarter, n, colour=incident_type)) +
+  geom_line(aes(color=incident_type), alpha=0.9) +
+  geom_point() +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", 
+               expand = c(0,0)) +
+  bg_and_axes + 
+  theme(axis.text.x = element_text(color = "#666666"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_blank()) +
+  ggtitle("Persons and animals in the water") +
+  scale_colour_brewer(palette = "Set1", direction=-1)
+
+```
+
+It looks like there is a definite seasonal peak for the animals: lot's of summertime incidents, not so much during winter time. That peak doesn't seem to be present for people, but then again, there's not much of a beach in Amsterdam. Let's look at the monthly averages to see if we can distinguish the seasonal peak.
+
+```{r person_animal_in_water_2}
+
+water_monthly <- brwaa %>%
+  filter(incident_type == "Animal in water" | incident_type == "Person in water") %>%
+  filter(district %in% top_district$district[1:10] & district != "") %>%
+  group_by(month_nr, month_name, year, incident_type) %>%
+  summarise(n = n()) %>% 
+  group_by(month_nr, month_name, incident_type) %>%
+  summarise(avg = mean(n), std = sd(n), n = n())
+
+ggplot(water_monthly, aes(month_nr, avg, colour=incident_type)) +
+  geom_ribbon(aes(ymin=avg-std/2, ymax=avg+std/2, linetype=NA), alpha=0.05) +
+  geom_line() +
+  geom_point() +
+  annotate("text", x=1, y=11, label="Standard deviation", size = 1.9, angle = 335, vjust = 1.3, hjust = 0,
+           color = "#aaaaaa") +  
+  bg_and_axes +
+  scale_y_continuous(limits = c(0,16)) +
+  scale_x_continuous(breaks=1:12, labels = unique(water_monthly$month_name),
+                     expand = c(0,0.2)) +
+  theme(axis.text.x = element_text(color = "#666666", angle = 45, 
+                                   vjust = 1, hjust = 0.9),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_blank()) +
+  ggtitle("Persons and animals in the water (average monthly)") +
+  scale_colour_brewer(palette = "Set1", direction=-1)
+
+```
+
+# Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
+We've seen a couple of interesting things. First of all, we noticed that a certain district, the Bijlmer, stood out from the rest with regard to elevator confinement, when looking at a heatmap of the district/incident type counts. On further inspection, we noticed that the relation between the Bijlmer ('Zuid-Oost') district and the other districts on this particular feature was an odd one. At the beginning of 2006 the number of elevator confinements was way above the average, but it has slowly declined over the years and is now on par with the overall average. We see the same trend when we look at the number of incidents corrected for the number of people living in the district. There too, the number of incidents per 1000 people is declining for the Zuid-Oost district.
+
+
+### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
+Another feature I looked into was that of retrieving people and animals from the water. There is a very strong seasonal trend for animals, with peaks in the summertime, but this trend was not as present for people. This was something I hadn't considered before, although it is not hard to imagine why this happens.
+
+
+
+### What was the strongest relationship you found?
+The strongest relationship seems to be the decline in elevator confinements over the years in the 'Zuid-Oost' district. Especially compared to the other districts in Amsterdam, and also when taking into account the number of people living there.
+
+
+# Multivariate Plots Section
+
+One thing we haven't really looked into so far, is using the population data from the dataset. In the next plot I want to use the population data to calculate the frequency of incidents based on the number of people living in a certain district.
+
+```{r population_and_frequency}
+#We'll leave out the Westpoort district because it's an industrial area with a very small population (<500)
+incidents_per_person <- brwaa %>%
+  filter(district != "Stadsdeel Westpoort") %>% 
+  group_by(year, district, population) %>%
+  summarise(n = n())
+
+ggplot(incidents_per_person, aes(year, n/population*1000, color=district)) +
+  geom_point() +
+  geom_line() +
+  scale_y_continuous(limits = c(0,21)) +
+  bg_and_axes +
+  ggtitle("Number of incidents per 1000 people per year")
+
+```
+
+Now let's go back to our elevator confinement case. We'll have a look again at the 'Zuid-Oost' district versus the average number of confinements. And then we'll correct for population differences.
+
+```{r average_elevator_confinements}
+ggplot(data = elevators, aes(month, n)) +
+  stat_summary(geom="line", linetype=3, fun.y = "mean") +
+  annotate("text", x=as.Date("2006-06-01"), y=22, 
+                             label="Average number of \nelevator confinements", size = 2) +
+  geom_line(data=elevators[which(elevators$district == "Stadsdeel Zuidoost"),], 
+             aes(y=n, colour=district)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", 
+               expand = c(0,0)) +
+  bg_and_axes + 
+  theme(axis.text.x = element_text(color = "#666666"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  ggtitle("Elevator confinements in Zuid-Oost") +
+  scale_fill_brewer(palette = "Set1")
+
+```
+
+Let's look at the same data but corrected for the number of people per district
+
+```{r elevator_confinements_per_1000}
+ggplot(data = elevators, aes(month, n/population*1000)) +
+  stat_summary(geom="line", linetype=3, fun.y = "mean") +
+  annotate("text", x=as.Date("2006-06-01"), y=0.5, 
+                             label="Average number of \nelevator confinements", size = 2) +
+  geom_line(data=elevators[which(elevators$district == "Stadsdeel Zuidoost"),], 
+             aes(y=n/population*1000, colour=district)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", 
+               expand = c(0,0)) +
+  bg_and_axes + 
+  theme(axis.text.x = element_text(color = "#666666"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  ggtitle("Elevator confinements in Zuid-Oost per 1000 people") +
+  scale_fill_brewer(palette = "Set1")
+```
+
+Now finally we turn to a grand overview of the data to see if we can spot any patterns. We'll show a heatmap of the top 20 incidents per hour of the day/day of the week.
+
+```{r fig.height=15, time_analysis_hour_day}
+day_of_week_hour_heatmap <- brwaa %>%
+  filter(incident_type %in% top_incidents$incident_type[1:20]) %>% 
+  group_by(day_name, hour, incident_type) %>%
+  summarise(n = n())
+
+ggplot(day_of_week_hour_heatmap, aes(factor(hour), day_name)) +
+  geom_tile(aes(fill=n^(1/2)), colour = "white") +
+  #geom_text(aes(label=n), size=2, colour="white") +
+  bg_and_axes + coord_equal() +
+  scale_fill_distiller(palette = "Reds", direction = 1) +
+   scale_y_discrete(limits = c("Zondag","Zaterdag","Vrijdag",
+                              "Donderdag","Woensdag","Dinsdag","Maandag"),
+                   labels = days_of_week_EN, expand = c(0,0)) + 
+  scale_x_discrete(expand = c(0,0)) +
+  theme(legend.position = "none",
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        panel.grid = element_blank()) +
+  ggtitle("Number of incidents per day of the week / hour of the day") +
+  facet_wrap(~incident_type, ncol = 2)
+```
+
+
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. Were there features that strengthened each other in terms of looking at your feature(s) of interest?
+When looking deeper into the data on elevator confinement we could see that the change in the Zuid-Oost district was really different from all of the other districts and was also not related to a change in population.
+
+Also when we compared different types of incidents on time of day and day of the week patterns started to emerge. For example, automatic alerts actually occurred mostly during working hours, whereas outside fires occur mostly outside of working hours.
+
+
+------
+
+# Final Plots and Summary
+
+### Plot One
+```{r fig.height=15, plot_one}
+day_of_week_hour_heatmap <- brwaa %>%
+  filter(incident_type %in% top_incidents$incident_type[1:20]) %>% 
+  group_by(day_name, hour, incident_type) %>%
+  summarise(n = n())
+
+ggplot(day_of_week_hour_heatmap, aes(factor(hour), day_name)) +
+  geom_tile(aes(fill=n^(1/2)), colour = "white") +
+  #geom_text(aes(label=n), size=2, colour="white") +
+  bg_and_axes + coord_equal() +
+  scale_fill_distiller(palette = "Reds", direction = 1) +
+   scale_y_discrete(limits = c("Zondag","Zaterdag","Vrijdag",
+                              "Donderdag","Woensdag","Dinsdag","Maandag"),
+                   labels = days_of_week_EN, expand = c(0,0)) + 
+  scale_x_discrete(expand = c(0,0)) +
+  theme(legend.position = "none",
+        axis.ticks = element_blank(),
+        axis.title = element_blank(),
+        axis.line = element_blank(),
+        panel.grid = element_blank()) +
+  ggtitle("Number of incidents per day of the week / hour of the day") +
+  facet_wrap(~incident_type, ncol = 2)
+```
+
+### Description One
+This first plot shows the different types of incidents that appear in the data per day/hour. I think it gives a great overview of the dataset and a way to spot patterns or interesting things. 
+
+### Plot Two
+```{r echo=FALSE, Plot_Two}
+ggplot(data = elevators, aes(month, n/population*1000)) +
+  stat_summary(geom="line", linetype=3, fun.y = "mean") +
+  annotate("text", x=as.Date("2006-06-01"), y=0.5, 
+                             label="Average number of \nelevator confinements", size = 2) +
+  geom_line(data=elevators[which(elevators$district == "Stadsdeel Zuidoost"),], 
+             aes(y=n/population*1000, colour=district)) +
+  scale_x_date(date_breaks = "1 year", date_labels = "%Y", 
+               expand = c(0,0)) +
+  bg_and_axes + 
+  theme(axis.text.x = element_text(color = "#666666"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank()) +
+  ggtitle("Elevator confinements in Zuid-Oost per 1000 people") +
+  scale_fill_brewer(palette = "Set1")
+```
+
+### Description Two
+The second plot I have chosen because it is one of the interesting things to find in this data set. It is a comparison of the average number of elevator confinements to that of a particular district, Zuid-Oost. This comparison shows how much the Zuid-Oost district differs from the other districts even when corrected for population.
+
+### Plot Three
+```{r echo=FALSE, Plot_Three}
+water_monthly <- brwaa %>%
+  filter(incident_type == "Animal in water" | incident_type == "Person in water") %>%
+  filter(district %in% top_district$district[1:10] & district != "") %>%
+  group_by(month_nr, month_name, year, incident_type) %>%
+  summarise(n = n()) %>% 
+  group_by(month_nr, month_name, incident_type) %>%
+  summarise(avg = mean(n), std = sd(n), n = n())
+
+ggplot(water_monthly, aes(month_nr, avg, colour=incident_type)) +
+  geom_ribbon(aes(ymin=avg-std/2, ymax=avg+std/2, linetype=NA), alpha=0.05) +
+  geom_line() +
+  geom_point() +
+  annotate("text", x=1, y=11, label="Standard deviation", size = 1.9, angle = 335, vjust = 1.3, hjust = 0,
+           color = "#aaaaaa") +  
+  bg_and_axes +
+  scale_y_continuous(limits = c(0,16)) +
+  scale_x_continuous(breaks=1:12, labels = unique(water_monthly$month_name),
+                     expand = c(0,0.2)) +
+  theme(axis.text.x = element_text(color = "#666666", angle = 45, 
+                                   vjust = 1, hjust = 0.9),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.line.y = element_blank()) +
+  ggtitle("Persons and animals in the water (average monthly)") +
+  scale_colour_brewer(palette = "Set1", direction=-1)
+
+```
+
+### Description Three
+This plot is another great example of the fascinating things you can find when looking at the fire department data. It shows how something you may not have expected the fire department to do —retrieving animals from the water— is different from retrieving people from the water. Since it has occurred in the same pattern for several years we can conclude that this is not just one hot summer, but a genuine pattern.
+
+------
+
+# Reflection
+
+The subject of this dataset, the work of the fire department, is something I find very interesting to visualise. It enables us to think about the larger story when we hear those sirens drive by. I was intrigued by the depth of the dataset, which meant that it took a while to truly understand what was going on. The first few plots were a way of finding out if there were any interesting angles to explore. What really helped me though, was learning how to properply use a heatmap in R. The ease of visualising patterns for, in this case, the different types of incidents in different parts of the city, has really given me some great insights into the dataset and has helped to dive further into interesting details like the elevator confinement, or retrieving people and animals from the water.
+Something that I found hard was using so many categorical variables and relatively little continuous variables. This made it harder to find a good way to plot, and that's where the heatmap came in handy. Adding the population data was a way to find some continuous variable that could potentially also serve as a basis for a model, especially when some more data like crime rates or unemployment is added. However adding that data in the right way took a few hours of diving further into R, though it taught me some valuable skills. Although the data set itself was pretty clean, it still took me quite some time to get everything right, even just figuring out that there were large amounts of whitespace in some places took hours of my time alone. 
+All in all I think this data set and analyses has provided a great way to learn some new visualisation skills and think about what is potentially interesting for an audience. For further exploration I'd look into adding some extra data like crime rates or unemployment, or maybe look for differences between years.
